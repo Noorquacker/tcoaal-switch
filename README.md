@@ -86,20 +86,13 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
 * Gamepad input with Switch controls: A interact, B back, X run, R fast-forward dialogue, + menu,
   left stick / D-pad move. The startup controls help shows them (`controls.png`, made for the
   port and swapped in at build time; it is not game art).
+* Performance is fine on real hardware (tested undocked). Explicit CPU/GPU clocks; images
+  decoded on worker threads; `Bitmap#blur`, `Bitmap.snap` and save compression
+  (`LZString.compressToBase64`, byte-identical output) are native (`runtime/js/gamefix.js`)
 * NRO with a custom icon; NSP (title ID `0100C0FF1E5A0000`) with an 8 MB main-thread stack
 
 ### Known issues / TODO
 
-* **Performance is really bad** (confirmed on real hardware). The JS interpreter takes about
-  10 ms per frame in yuzu, versus about 1.5 ms on a desktop PC. Ideas:
-  * profile hot paths (Pixi's sprite batching, the tilemap, window/bitmap redraws)
-  * Done: images are read and decoded on worker threads; `Bitmap#blur` and `Bitmap.snap` (run on
-    every scene change and room transfer for the menu background, ~150 ms on desktop) are native
-    (`runtime/js/gamefix.js`), now ~13 ms on desktop
-  * Done: `LZString.compressToBase64` (saves, and the autosave on every room transfer) is native,
-    with byte-identical output: 2–3 ms instead of 20–40 ms on desktop
-  * avoid repeated full-texture uploads of dirty canvases
-  * check `-O3`/LTO
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
 * **Unsupported canvas blend modes:** `difference`, `saturation` and `multiply` fall back to
   normal drawing. They appear to be used only by RPG Maker's non-WebGL fallback paths and its
@@ -112,3 +105,9 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
 `runtime/npdm.json` is based on nx-hbloader's `hbl.json`. It must **not** contain a
 `debug_flags` capability: yuzu then fails to load the title with error `0007-0020`
 ("Unable to completely parse the kernel metadata").
+
+### Possible further optimization
+
+Not needed so far. If it ever is: on desktop, a room transfer still spends about 30 ms creating
+the map scene's windows (`Scene_Map#createAllWindows`) and about 30 ms on the first tilemap
+render. Other ideas: avoid full-texture uploads of dirty canvases, try `-O3`/LTO.
