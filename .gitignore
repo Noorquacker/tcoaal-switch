@@ -3,6 +3,7 @@
 /extracted/
 *.ogg
 *.png
+!/controls.png
 /build/
 /runtime/build-host/
 /runtime/compile_commands.json

@@ -83,7 +83,9 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   `RegExp.$1`… statics, which QuickJS lacks; shimmed in `runtime/js/core.js`)
 * Saving and loading of settings and global save data
 * Audio: background music, sound effects and fades, with Vorbis decoding on worker threads
-* Gamepad input. A/B and X/Y are swapped on the Switch so that Nintendo A confirms and B cancels.
+* Gamepad input with Switch controls: A interact, B back, X run, R fast-forward dialogue, + menu,
+  left stick / D-pad move. The startup controls help shows them (`controls.png`, made for the
+  port and swapped in at build time; it is not game art).
 * NRO with a custom icon; NSP (title ID `0100C0FF1E5A0000`) with an 8 MB main-thread stack
 
 ### Known issues / TODO
@@ -99,11 +101,6 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   * avoid repeated full-texture uploads of dirty canvases
   * check `-O3`/LTO
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
-* **Button mappings are not fully verified.** A/B were confirmed swapped and fixed. X/Y were
-  swapped along with them (the game's dash/menu actions) but haven't been checked in game. The
-  shoulder buttons, triggers and +/− also haven't been checked.
-* **The controls help at the start of the game still describes the PC/keyboard controls.** It
-  should show Switch buttons.
 * **Unsupported canvas blend modes:** `difference`, `saturation` and `multiply` fall back to
   normal drawing. They appear to be used only by RPG Maker's non-WebGL fallback paths and its
   capability tests. `lighter` (used for the menu background blur) is implemented.

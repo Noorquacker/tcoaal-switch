@@ -10,6 +10,7 @@ What it does (all on the user's own copy; nothing from the game is shipped):
     patches BUILD_FLAGS so the game neither decrypts again nor requires Steam
   * makes the hidden-script loader in NonCombatMenu.js load that file instead
   * replaces the asm.js Vorbis decoder plugins with the runtime's native one
+  * replaces the startup controls picture with the port's own (controls.png)
   * precompiles every .js file to QuickJS bytecode (.jsbc) when --jsbc is given
 """
 import argparse
@@ -23,10 +24,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from extract_loader import main as extract_core  # noqa: E402
 from tcoaal_crypt import SIG, decrypt  # noqa: E402
 
-RUNTIME_JS = Path(__file__).resolve().parent.parent / "runtime" / "js"
+ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_JS = ROOT / "runtime" / "js"
 CORE_NAME = "_tcoaal_core.js"
 # Files the port does not need on the console.
 SKIP_DIRS = {"greenworks", "languages/tool"}
+
+# Game files replaced by the port's own assets (made for the port, not game art).
+# img/pictures/5972d18a4e7f34a8 is the keyboard/controller help shown when a game starts.
+OVERRIDES = {
+    "img/pictures/5972d18a4e7f34a8": ROOT / "controls.png",
+}
 
 # BUILD_FLAGS: 0x1 = Steam required, 0x80 = encrypted assets, 0x100 = hashed names.
 CORE_PATCHES = [
@@ -91,6 +99,11 @@ def main() -> None:
     # The runtime provides `stbvorbis` natively; keep the file names the plugin loads.
     for name in ("stbvorbis_stream.js", "stbvorbis_stream_asm.js"):
         (plugins / name).write_text("// replaced by the native decoder in the port runtime\n", encoding="utf-8")
+
+    for rel, src in OVERRIDES.items():
+        if not (game_www / rel).exists():
+            raise SystemExit(f"override target {rel} missing; unsupported game version?")
+        shutil.copyfile(src, game_www / rel)
 
     rt_out = a.out / "runtime"
     shutil.copytree(RUNTIME_JS, rt_out)

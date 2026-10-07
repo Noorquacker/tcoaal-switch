@@ -30,6 +30,12 @@
         return bitmap;
     };
 
+    // Switch layout: + opens the menu (standard button 9) instead of Y (3).
+    if (global.Input && global.Input.gamepadMapper) {
+        delete global.Input.gamepadMapper[3];
+        global.Input.gamepadMapper[9] = 'menu';
+    }
+
     // Saves (including the autosave on every room transfer) are compressed with
     // LZString; the native port produces identical output, ~10x faster.
     if (global.LZString) {
