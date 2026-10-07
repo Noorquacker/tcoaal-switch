@@ -1,0 +1,95 @@
+# Switch (libnx) build of the runtime. Usually driven by the top-level Makefile:
+#   make -f Makefile.switch ROMFS=<romfs dir> OUT=<build dir>
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Set DEVKITPRO=<path to devkitPro> in your environment")
+endif
+
+# NACP fields must be set before switch_rules, which fills in defaults
+APP_TITLE   ?= The Coffin of Andy and Leyley
+APP_AUTHOR  ?= tcoaal-switch (unofficial port)
+APP_VERSION ?= 3.0.11
+
+include $(DEVKITPRO)/libnx/switch_rules
+
+ROMFS    ?= ../build/romfs
+OUT      ?= ../build
+ICON     ?= $(LIBNX)/default_icon.jpg
+
+TP       := third_party
+OBJDIR   := $(OUT)/obj-switch
+TARGET   := $(OUT)/tcoaal
+
+ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
+PKGS     := sdl2 glesv2 egl zlib
+PKGCFG   := $(PORTLIBS)/bin/aarch64-none-elf-pkg-config
+
+CFLAGS   := -g -O2 -ffunction-sections $(ARCH) -D__SWITCH__ -I$(LIBNX)/include \
+            $(shell $(PKGCFG) --cflags $(PKGS)) \
+            -Isrc -Icompat/switch -I$(TP)/quickjs -I$(TP)/plutovg/include -I$(TP)/stb \
+            -DPLUTOVG_BUILD_STATIC -std=gnu11
+WARN     := -Wall -Wextra -Wno-unused-parameter
+LDFLAGS  := -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,-Map,$(TARGET).map
+LIBS     := $(shell $(PKGCFG) --libs $(PKGS)) -lnx -lm
+
+QJS_SRC  := dtoa.c libregexp.c libunicode.c quickjs.c
+PVG_SRC  := $(notdir $(wildcard $(TP)/plutovg/source/*.c))
+RT_SRC   := main.c sys.c canvas.c gl.c audio.c input.c
+
+OBJS := $(addprefix $(OBJDIR)/qjs/,$(QJS_SRC:.c=.o)) \
+        $(addprefix $(OBJDIR)/pvg/,$(PVG_SRC:.c=.o)) \
+        $(addprefix $(OBJDIR)/rt/,$(RT_SRC:.c=.o))
+
+.PHONY: all nsp clean
+all: $(TARGET).nro
+
+$(OBJDIR)/qjs/%.o: $(TP)/quickjs/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DQUICKJS_NG_BUILD -w -c $< -o $@
+
+$(OBJDIR)/pvg/%.o: $(TP)/plutovg/source/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -w -c $< -o $@
+
+$(OBJDIR)/rt/audio.o: src/audio.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(WARN) -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-unused-value -c $< -o $@
+
+$(OBJDIR)/rt/%.o: src/%.c src/rt.h
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(WARN) -c $< -o $@
+
+$(TARGET).elf: $(OBJS)
+	$(CXX) $(LDFLAGS) $(OBJS) $(LIBS) -o $@  # C++ driver: Mesa needs libstdc++ last
+
+$(TARGET).nacp:
+	nacptool --create "$(APP_TITLE)" "$(APP_AUTHOR)" "$(APP_VERSION)" $@
+
+$(TARGET).nro: $(TARGET).elf $(TARGET).nacp
+	@test -f $(ROMFS)/www/index.html || (echo "romfs missing: run 'make romfs GAME=...' first" && false)
+	elf2nro $< $@ --icon=$(ICON) --nacp=$(TARGET).nacp --romfsdir=$(ROMFS)
+
+# --- NSP (installable title). Needs hacBrewPack and your own console keys. ---
+TITLE_ID ?= 0100C0FF1E5A0000
+KEYS     ?= $(firstword $(wildcard $(HOME)/.switch/prod.keys $(HOME)/.local/share/yuzu/keys/prod.keys))
+HACBREWPACK ?= hacbrewpack
+NSPWORK  := $(OUT)/nsp-work
+
+nsp: $(TARGET).nsp
+
+$(TARGET).nsp: $(TARGET).elf $(TARGET).nacp npdm.json
+	@test -n "$(KEYS)" || (echo "prod.keys not found: pass KEYS=/path/to/prod.keys" && false)
+	@test -f $(ROMFS)/www/index.html || (echo "romfs missing: run 'make romfs GAME=...' first" && false)
+	rm -rf $(NSPWORK) && mkdir -p $(NSPWORK)/exefs $(NSPWORK)/control
+	elf2nso $(TARGET).elf $(NSPWORK)/exefs/main
+	npdmtool npdm.json $(NSPWORK)/exefs/main.npdm
+	cp $(TARGET).nacp $(NSPWORK)/control/control.nacp
+	cp $(ICON) $(NSPWORK)/control/icon_AmericanEnglish.dat
+	cd $(NSPWORK) && $(HACBREWPACK) -k "$(KEYS)" --titleid $(TITLE_ID) --nologo \
+	    --titlename "$(APP_TITLE)" --titlepublisher "$(APP_AUTHOR)" \
+	    --exefsdir exefs --romfsdir "$(abspath $(ROMFS))" --controldir control \
+	    --nspdir nsp --ncadir nca --tempdir temp --backupdir backup
+	mv $(NSPWORK)/nsp/*.nsp $@  # hacbrewpack lowercases the title id
+	rm -rf $(NSPWORK)
+
+clean:
+	rm -rf $(OBJDIR) $(NSPWORK) $(TARGET).elf $(TARGET).nro $(TARGET).nsp $(TARGET).nacp $(TARGET).map

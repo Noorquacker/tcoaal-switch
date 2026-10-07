@@ -1,0 +1,9 @@
+[submodule "runtime/third_party/quickjs"]
+	path = runtime/third_party/quickjs
+	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "runtime/third_party/plutovg"]
+	path = runtime/third_party/plutovg
+	url = https://github.com/sammycage/plutovg.git
+[submodule "runtime/third_party/stb"]
+	path = runtime/third_party/stb
+	url = https://github.com/nothings/stb.git

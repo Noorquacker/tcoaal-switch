@@ -1,0 +1,10 @@
+# Never commit game content
+/out/
+/extracted/
+*.ogg
+*.png
+/build/
+/runtime/build-host/
+/runtime/compile_commands.json
+__pycache__/
+*.pyc
