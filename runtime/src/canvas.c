@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <SDL.h>
 #include "plutovg.h"
 #include "rt.h"
 
@@ -297,6 +298,99 @@ static JSValue js_decode_image(JSContext *ctx, JSValueConst this, int argc, JSVa
     s->font = fallback_font;
     s->font_size = 10;
     return surface_wrap(ctx, s);
+}
+
+// Asynchronous image loading: decodeImageAsync(pathOrBytes, cb) reads (for a
+// string path) and decodes on a worker thread, then calls cb(surface | null) from
+// the main loop. Keeps PNG decoding off the main thread during map transitions.
+typedef struct ImageJob {
+    struct ImageJob *next;
+    char *path;          // virtual path, or NULL when bytes were given
+    uint8_t *bytes;
+    size_t len;
+    JSValue cb;          // only touched on the main thread
+    plutovg_surface_t *img;
+} ImageJob;
+
+#define IMAGE_WORKERS 2
+static SDL_mutex *img_lock;
+static SDL_cond *img_cond;
+static ImageJob *img_head, *img_tail;
+
+static void image_done(JSContext *ctx, void *data) {
+    ImageJob *j = data;
+    JSValue arg = JS_NULL;
+    if (j->img) {
+        Surface *s = calloc(1, sizeof *s);
+        s->surf = j->img;
+        s->w = plutovg_surface_get_width(j->img);
+        s->h = plutovg_surface_get_height(j->img);
+        s->cv = plutovg_canvas_create(j->img);
+        s->font = fallback_font;
+        s->font_size = 10;
+        arg = surface_wrap(ctx, s);
+    }
+    JSValue r = JS_Call(ctx, j->cb, JS_UNDEFINED, 1, &arg);
+    if (JS_IsException(r)) rt_dump_exception(ctx);
+    JS_FreeValue(ctx, r);
+    JS_FreeValue(ctx, arg);
+    JS_FreeValue(ctx, j->cb);
+    free(j);
+}
+
+static int image_worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        SDL_LockMutex(img_lock);
+        while (!img_head) SDL_CondWait(img_cond, img_lock);
+        ImageJob *j = img_head;
+        img_head = j->next;
+        if (!img_head) img_tail = NULL;
+        SDL_UnlockMutex(img_lock);
+
+        if (j->path) {
+            j->bytes = rt_fs_read(j->path, &j->len);
+            free(j->path);
+        }
+        j->img = j->bytes ? plutovg_surface_load_from_image_data(j->bytes, (int)j->len) : NULL;
+        free(j->bytes);
+        rt_post(image_done, j);
+    }
+    return 0;
+}
+
+static JSValue js_decode_image_async(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
+    (void)this; (void)argc;
+    if (!JS_IsFunction(ctx, argv[1])) return JS_ThrowTypeError(ctx, "decodeImageAsync: callback expected");
+    ImageJob *j = calloc(1, sizeof *j);
+    if (JS_IsString(argv[0])) {
+        const char *p = JS_ToCString(ctx, argv[0]);
+        j->path = strdup(p ? p : "");
+        JS_FreeCString(ctx, p);
+    } else {
+        size_t len;
+        uint8_t *b = rt_get_bytes(ctx, argv[0], &len);
+        if (b && (j->bytes = malloc(len ? len : 1))) {
+            memcpy(j->bytes, b, len);
+            j->len = len;
+        }
+    }
+    j->cb = JS_DupValue(ctx, argv[1]);
+    if (!img_lock) {
+        img_lock = SDL_CreateMutex();
+        img_cond = SDL_CreateCond();
+        for (int i = 0; i < IMAGE_WORKERS; i++) {
+            SDL_Thread *t = SDL_CreateThread(image_worker, "image", NULL);
+            if (t) SDL_DetachThread(t);
+        }
+    }
+    SDL_LockMutex(img_lock);
+    if (img_tail) img_tail->next = j;
+    else img_head = j;
+    img_tail = j;
+    SDL_CondSignal(img_cond);
+    SDL_UnlockMutex(img_lock);
+    return JS_UNDEFINED;
 }
 
 static JSValue js_resize(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
@@ -708,6 +802,42 @@ static void png_write(void *closure, void *data, int size) {
     *len += (size_t)size;
 }
 
+// boxBlur(passes): RPG Maker's Bitmap#blur done natively. Each pass is a 3x3 box
+// filter with clamped edges, drawn over black, so the result is opaque. (The JS
+// version takes 28 full-surface draws per call.)
+static JSValue js_box_blur(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
+    SURF_OR_RETURN(JS_UNDEFINED);
+    int passes = argc > 0 ? rt_arg_i(ctx, argv[0]) : 1;
+    int w = s->w, h = s->h, stride = plutovg_surface_get_stride(s->surf) / 4;
+    uint32_t *px = (uint32_t *)plutovg_surface_get_data(s->surf);
+    uint16_t *row = malloc((size_t)w * h * 3 * sizeof *row);  // horizontal sums, per channel
+    if (!row) return JS_UNDEFINED;
+    for (int p = 0; p < passes; p++) {
+        for (int y = 0; y < h; y++) {
+            const uint32_t *r = px + (size_t)y * stride;
+            uint16_t *o = row + (size_t)y * w * 3;
+            for (int x = 0; x < w; x++) {
+                uint32_t a = r[x > 0 ? x - 1 : 0], b = r[x], c = r[x < w - 1 ? x + 1 : w - 1];
+                o[x * 3 + 0] = (uint16_t)(((a >> 16) & 255) + ((b >> 16) & 255) + ((c >> 16) & 255));
+                o[x * 3 + 1] = (uint16_t)(((a >> 8) & 255) + ((b >> 8) & 255) + ((c >> 8) & 255));
+                o[x * 3 + 2] = (uint16_t)((a & 255) + (b & 255) + (c & 255));
+            }
+        }
+        for (int y = 0; y < h; y++) {
+            const uint16_t *a = row + (size_t)(y > 0 ? y - 1 : 0) * w * 3, *b = row + (size_t)y * w * 3,
+                           *c = row + (size_t)(y < h - 1 ? y + 1 : h - 1) * w * 3;
+            uint32_t *o = px + (size_t)y * stride;
+            for (int x = 0; x < w * 3; x += 3) {
+                uint32_t R = (a[x] + b[x] + c[x] + 4) / 9, G = (a[x + 1] + b[x + 1] + c[x + 1] + 4) / 9,
+                         B = (a[x + 2] + b[x + 2] + c[x + 2] + 4) / 9;
+                o[x / 3] = 0xFF000000u | R << 16 | G << 8 | B;
+            }
+        }
+    }
+    free(row);
+    return JS_UNDEFINED;
+}
+
 static JSValue js_encode_png(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
     (void)argc; (void)argv;
     SURF_OR_RETURN(JS_NULL);
@@ -794,6 +924,7 @@ static const JSCFunctionListEntry surface_funcs[] = {
     JS_CFUNC_DEF("getImageData", 4, js_get_image_data),
     JS_CFUNC_DEF("putImageData", 5, js_put_image_data),
     JS_CFUNC_DEF("encodePNG", 0, js_encode_png),
+    JS_CFUNC_DEF("boxBlur", 1, js_box_blur),
 };
 
 void rt_init_canvas(JSContext *ctx, JSValueConst ns) {
@@ -810,6 +941,7 @@ void rt_init_canvas(JSContext *ctx, JSValueConst ns) {
     JSValue cv = JS_NewObject(ctx);
     rt_set_func(ctx, cv, "create", js_create, 2);
     rt_set_func(ctx, cv, "decodeImage", js_decode_image, 1);
+    rt_set_func(ctx, cv, "decodeImageAsync", js_decode_image_async, 2);
     rt_set_func(ctx, cv, "linearGradient", js_linear_gradient, 5);
     rt_set_func(ctx, cv, "radialGradient", js_radial_gradient, 7);
     rt_set_func(ctx, cv, "registerFont", js_register_font, 4);

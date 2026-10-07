@@ -43,6 +43,7 @@
 
     // plugins added by PluginManager.setup()
     rt.runPendingScripts();
+    sys.evalScript('/game/runtime/gamefix.js');
 
     document.readyState = 'complete';
     document.dispatchEvent(new Event('DOMContentLoaded'));

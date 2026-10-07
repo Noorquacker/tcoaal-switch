@@ -79,7 +79,8 @@ bool rt_fs_resolve(const char *vpath, char *out, size_t outsz) {
     // split into segments, resolving "." and ".."
     char *segs[128];
     int ns = 0;
-    for (char *tok = strtok(buf, "/"); tok; tok = strtok(NULL, "/")) {
+    char *save;  // strtok_r: also called from image worker threads
+    for (char *tok = strtok_r(buf, "/", &save); tok; tok = strtok_r(NULL, "/", &save)) {
         if (!strcmp(tok, ".")) continue;
         if (!strcmp(tok, "..")) {
             if (ns > 1) ns--;

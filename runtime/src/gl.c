@@ -584,6 +584,33 @@ FN(gl_readPixels) {
     return JS_UNDEFINED;
 }
 
+// readPixelsSurface(x, y, w, h, surface): RGBA readback straight into a canvas
+// surface (top row first, as Pixi's render textures are stored), treating the
+// pixels like putImageData does. Used by the native Bitmap.snap.
+FN(gl_readPixelsSurface) {
+    UNUSED;
+    const uint8_t *data;
+    int sw, sh, stride, w = A_I(2), h = A_I(3);
+    if (!rt_canvas_pixels(ctx, argv[4], &data, &sw, &sh, &stride)) return JS_ThrowTypeError(ctx, "readPixelsSurface: bad surface");
+    if (!data) return JS_UNDEFINED;
+    if (w > sw) w = sw;
+    if (h > sh) h = sh;
+    uint8_t *p = scratch_get((size_t)w * (size_t)h * 4);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(A_I(0), A_I(1), w, h, GL_RGBA, GL_UNSIGNED_BYTE, p);
+    for (int y = 0; y < h; y++) {
+        const uint8_t *src = p + (size_t)y * w * 4;
+        uint32_t *dst = (uint32_t *)(data + (size_t)y * stride);
+        for (int x = 0; x < w; x++, src += 4) {
+            uint32_t a = src[3];
+            if (a == 255) dst[x] = 0xFF000000u | (uint32_t)src[0] << 16 | (uint32_t)src[1] << 8 | src[2];
+            else dst[x] = a << 24 | (uint32_t)((src[0] * a + 127) / 255) << 16 | (uint32_t)((src[1] * a + 127) / 255) << 8 |
+                          (uint32_t)((src[2] * a + 127) / 255);
+        }
+    }
+    return JS_UNDEFINED;
+}
+
 // ---------------------------------------------------------------------------
 // queries
 
@@ -686,7 +713,7 @@ static const JSCFunctionListEntry gl_funcs[] = {
     F(getTexParameter, 2), F(getUniformLocation, 2), F(getVertexAttrib, 2), F(hint, 2),
     F(isBuffer, 1), F(isEnabled, 1), F(isFramebuffer, 1), F(isProgram, 1), F(isRenderbuffer, 1),
     F(isShader, 1), F(isTexture, 1), F(lineWidth, 1), F(linkProgram, 1), F(pixelStorei, 2),
-    F(polygonOffset, 2), F(readPixels, 7), F(renderbufferStorage, 4), F(sampleCoverage, 2),
+    F(polygonOffset, 2), F(readPixels, 7), F(readPixelsSurface, 5), F(renderbufferStorage, 4), F(sampleCoverage, 2),
     F(scissor, 4), F(shaderSource, 2), F(stencilFunc, 3), F(stencilFuncSeparate, 4),
     F(stencilMask, 1), F(stencilMaskSeparate, 2), F(stencilOp, 3), F(stencilOpSeparate, 4),
     F(texImage2D, 9), F(texSubImage2D, 9), F(texImageSurface, 6), F(texSubImageSurface, 7),

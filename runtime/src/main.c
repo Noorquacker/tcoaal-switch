@@ -158,6 +158,7 @@ static void stats_frame(double frame_ms, double js_ms) {
     if (frame_ms > worst) worst = frame_ms;
     n++;
     t_last += frame_ms;
+    if (frame_ms > 50) rt_log("stats: slow frame %.1f ms (js %.1f ms)", frame_ms, js_ms);
     if (t_last >= 5000) {
         rt_log("stats: %.1f fps, frame %.2f ms avg / %.2f worst, js %.2f ms avg, heap %.1f MB",
                n * 1000.0 / t_last, acc_frame / n, worst, acc_js / n,

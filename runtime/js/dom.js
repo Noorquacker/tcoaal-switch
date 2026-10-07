@@ -207,13 +207,8 @@
             this.complete = false;
             const token = (this._token = {});
             if (!this._src) return;
-            rt.queueTask(() => {
+            const done = (surf) => {
                 if (this._token !== token) return;
-                let bytes = null;
-                try {
-                    bytes = rt.loadBytes(this._src);
-                } catch (e) {}
-                const surf = bytes ? __native.canvas.decodeImage(bytes) : null;
                 this.complete = true;
                 if (surf) {
                     this._surface = surf;
@@ -222,7 +217,15 @@
                     console.warn('image failed: ' + this._src);
                     this.dispatchEvent(new Event('error'));
                 }
-            });
+            };
+            // read + decode on a worker thread; load fires from a later frame
+            let src = null;
+            try {
+                const r = rt.resolveUrl(this._src);
+                src = r.blob !== undefined || r.data ? rt.loadBytes(this._src) : r.path;
+            } catch (e) {}
+            if (src) __native.canvas.decodeImageAsync(src, done);
+            else rt.queueTask(() => done(null));
         }
         decode() {
             return new Promise((res, rej) => {

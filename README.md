@@ -64,7 +64,7 @@ environment (host) or `<save dir>/debug.cfg` (one `KEY=value` per line):
 
 | Key | Effect |
 |---|---|
-| `TCOAAL_STATS=1` | Log FPS, average/worst frame time, JS time and heap every 5 s |
+| `TCOAAL_STATS=1` | Log FPS, average/worst frame time, JS time and heap every 5 s, and every frame over 50 ms |
 | `TCOAAL_SHOTS=120:/path/a.png,600:/path/b.png` | Screenshot after the given frames. This can upset yuzu's GPU emulation. |
 | `TCOAAL_KEYS=300:13,420:27` | Tap a DOM keyCode at the given frames |
 | `TCOAAL_EXIT=900` | Quit after N frames |
@@ -91,7 +91,10 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
 * **Performance is really bad** (confirmed on real hardware). The JS interpreter takes about
   10 ms per frame in yuzu, versus about 1.5 ms on a desktop PC. Ideas:
   * profile hot paths (Pixi's sprite batching, the tilemap, window/bitmap redraws)
-  * move image decoding off the main thread (it currently happens synchronously when images load)
+  * Done: images are read and decoded on worker threads; `Bitmap#blur` and `Bitmap.snap` (run on
+    every scene change and room transfer for the menu background, ~150 ms on desktop) are native
+    (`runtime/js/gamefix.js`), now ~13 ms on desktop
+  * the autosave on room transfer spends 25–50 ms (desktop) in `LZString.compressToBase64`
   * avoid repeated full-texture uploads of dirty canvases
   * check `-O3`/LTO
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
