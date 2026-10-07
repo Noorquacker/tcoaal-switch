@@ -29,4 +29,11 @@
         bitmap._setDirty();
         return bitmap;
     };
+
+    // Saves (including the autosave on every room transfer) are compressed with
+    // LZString; the native port produces identical output, ~10x faster.
+    if (global.LZString) {
+        const sys = __native.sys;
+        global.LZString.compressToBase64 = (s) => (s == null ? '' : sys.lzCompressBase64(String(s)));
+    }
 })(globalThis);

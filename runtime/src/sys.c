@@ -242,6 +242,159 @@ void rt_drain_events(JSContext *ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// LZString.compressToBase64 (lz-string 1.3.x, as bundled with RPG Maker MV), for
+// save files. Output is identical to the JS version; it is a direct port over
+// UTF-16 code units, with the dictionary keyed on (prefix code, next unit).
+
+typedef struct {
+    uint16_t *out;
+    size_t n, cap;
+    uint32_t h;
+    int p;
+} LzBits;
+
+static void lz_unit(LzBits *b, uint32_t v) {
+    if (b->n == b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 1024;
+        b->out = realloc(b->out, b->cap * sizeof *b->out);
+    }
+    b->out[b->n++] = (uint16_t)v;
+}
+static void lz_bits(LzBits *b, uint32_t v, int nbits) {  // LSB first, like the JS
+    for (int i = 0; i < nbits; i++) {
+        b->h = b->h << 1 | (v & 1);
+        if (b->p == 15) {
+            b->p = 0;
+            lz_unit(b, b->h);
+            b->h = 0;
+        } else {
+            b->p++;
+        }
+        v >>= 1;
+    }
+}
+
+// WTF-8 (QuickJS's encoding of strings, lone surrogates included) to UTF-16
+static uint16_t *utf16_from_wtf8(const uint8_t *s, size_t len, size_t *out_n) {
+    uint16_t *u = malloc((len + 1) * sizeof *u);
+    size_t n = 0;
+    for (size_t i = 0; i < len;) {
+        uint32_t c = s[i];
+        if (c < 0x80) i += 1;
+        else if (c < 0xE0 && i + 1 < len) c = (c & 0x1F) << 6 | (s[i + 1] & 0x3F), i += 2;
+        else if (c < 0xF0 && i + 2 < len) c = (c & 0x0F) << 12 | (s[i + 1] & 0x3F) << 6 | (s[i + 2] & 0x3F), i += 3;
+        else if (i + 3 < len) c = (c & 0x07) << 18 | (s[i + 1] & 0x3F) << 12 | (s[i + 2] & 0x3F) << 6 | (s[i + 3] & 0x3F), i += 4;
+        else i += 1;
+        if (c >= 0x10000) {
+            c -= 0x10000;
+            u[n++] = (uint16_t)(0xD800 | c >> 10);
+            u[n++] = (uint16_t)(0xDC00 | (c & 0x3FF));
+        } else {
+            u[n++] = (uint16_t)c;
+        }
+    }
+    *out_n = n;
+    return u;
+}
+
+static JSValue js_lz_compress_base64(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
+    (void)this; (void)argc;
+    size_t slen, n;
+    const char *str = JS_ToCStringLen(ctx, &slen, argv[0]);
+    if (!str) return JS_EXCEPTION;
+    uint16_t *in = utf16_from_wtf8((const uint8_t *)str, slen, &n);
+    JS_FreeCString(ctx, str);
+
+    int32_t *single = malloc(65536 * sizeof *single);  // code of each single unit, -1 if none
+    uint8_t *fresh = calloc(65536, 1);                  // "dictionaryToCreate": not yet emitted raw
+    for (int i = 0; i < 65536; i++) single[i] = -1;
+    size_t cap = 64;
+    while (cap < n * 2 + 16) cap <<= 1;
+    uint64_t *keys = malloc(cap * sizeof *keys);  // (prefix code << 16 | unit) + 1, 0 = empty
+    uint32_t *vals = malloc(cap * sizeof *vals);
+    memset(keys, 0, cap * sizeof *keys);
+
+    LzBits b = {0};
+    uint32_t enlarge = 2, next = 3, nbits = 2;
+    int32_t w = -1;  // code of the current prefix, -1 when empty
+    int32_t w_unit = -1;  // the prefix's unit when it is a single unit
+#define LZ_SHRINK() do { if (--enlarge == 0) { enlarge = 1u << nbits; nbits++; } } while (0)
+#define LZ_EMIT_W() do {                                             \
+        if (w_unit >= 0 && fresh[w_unit]) {                          \
+            if (w_unit < 256) { lz_bits(&b, 0, nbits); lz_bits(&b, w_unit, 8); } \
+            else { lz_bits(&b, 1, nbits); lz_bits(&b, w_unit, 16); }  \
+            LZ_SHRINK();                                             \
+            fresh[w_unit] = 0;                                       \
+        } else {                                                     \
+            lz_bits(&b, (uint32_t)w, nbits);                         \
+        }                                                            \
+        LZ_SHRINK();                                                 \
+    } while (0)
+    for (size_t i = 0; i < n; i++) {
+        uint16_t c = in[i];
+        if (single[c] < 0) {
+            single[c] = (int32_t)next++;
+            fresh[c] = 1;
+        }
+        if (w < 0) {
+            w = single[c];
+            w_unit = c;
+            continue;
+        }
+        uint64_t key = ((uint64_t)(uint32_t)w << 16 | c) + 1;
+        size_t h = (size_t)(key * 0x9E3779B97F4A7C15ull) & (cap - 1);
+        while (keys[h] && keys[h] != key) h = (h + 1) & (cap - 1);
+        if (keys[h]) {
+            w = (int32_t)vals[h];
+            w_unit = -1;
+        } else {
+            LZ_EMIT_W();
+            keys[h] = key;
+            vals[h] = next++;
+            w = single[c];
+            w_unit = c;
+        }
+    }
+    if (w >= 0) LZ_EMIT_W();
+    lz_bits(&b, 2, nbits);
+    for (;;) {
+        b.h <<= 1;
+        if (b.p == 15) {
+            lz_unit(&b, b.h);
+            break;
+        }
+        b.p++;
+    }
+#undef LZ_EMIT_W
+#undef LZ_SHRINK
+    free(in);
+    free(single);
+    free(fresh);
+    free(keys);
+    free(vals);
+
+    // base64 of the units as big-endian bytes
+    static const char k64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t nbytes = b.n * 2, olen = (nbytes + 2) / 3 * 4;
+    char *o = malloc(olen + 1);
+    size_t j = 0;
+    for (size_t i = 0; i < nbytes; i += 3) {
+        uint32_t x0 = b.out[i / 2] >> ((i & 1) ? 0 : 8) & 255;
+        int has1 = i + 1 < nbytes, has2 = i + 2 < nbytes;
+        uint32_t x1 = has1 ? b.out[(i + 1) / 2] >> (((i + 1) & 1) ? 0 : 8) & 255 : 0;
+        uint32_t x2 = has2 ? b.out[(i + 2) / 2] >> (((i + 2) & 1) ? 0 : 8) & 255 : 0;
+        o[j++] = k64[x0 >> 2];
+        o[j++] = k64[(x0 & 3) << 4 | x1 >> 4];
+        o[j++] = has1 ? k64[(x1 & 15) << 2 | x2 >> 6] : '=';
+        o[j++] = has2 ? k64[x2 & 63] : '=';
+    }
+    free(b.out);
+    JSValue r = JS_NewStringLen(ctx, o, j);
+    free(o);
+    return r;
+}
+
+// ---------------------------------------------------------------------------
 // sha256 (for Utils.hashString / crypto.createHash)
 
 static const uint32_t K256[64] = {
@@ -550,6 +703,7 @@ void rt_init_sys(JSContext *ctx, JSValueConst ns) {
     rt_set_func(ctx, sys, "log", js_log, 1);
     rt_set_func(ctx, sys, "now", js_now, 0);
     rt_set_func(ctx, sys, "readFile", js_read_file, 1);
+    rt_set_func(ctx, sys, "lzCompressBase64", js_lz_compress_base64, 1);
     rt_set_func(ctx, sys, "readText", js_read_text, 1);
     rt_set_func(ctx, sys, "writeFile", js_write_file, 2);
     rt_set_func(ctx, sys, "stat", js_stat, 1);

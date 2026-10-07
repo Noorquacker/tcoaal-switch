@@ -94,7 +94,8 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   * Done: images are read and decoded on worker threads; `Bitmap#blur` and `Bitmap.snap` (run on
     every scene change and room transfer for the menu background, ~150 ms on desktop) are native
     (`runtime/js/gamefix.js`), now ~13 ms on desktop
-  * the autosave on room transfer spends 25–50 ms (desktop) in `LZString.compressToBase64`
+  * Done: `LZString.compressToBase64` (saves, and the autosave on every room transfer) is native,
+    with byte-identical output: 2–3 ms instead of 20–40 ms on desktop
   * avoid repeated full-texture uploads of dirty canvases
   * check `-O3`/LTO
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
