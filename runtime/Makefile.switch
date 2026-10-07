@@ -64,7 +64,14 @@ $(TARGET).elf: $(OBJS)
 $(TARGET).nacp:
 	nacptool --create "$(APP_TITLE)" "$(APP_AUTHOR)" "$(APP_VERSION)" $@
 
-$(TARGET).nro: $(TARGET).elf $(TARGET).nacp
+# Repack when anything in the romfs changes, not only the executable. (A stamp,
+# because game file names contain spaces.)
+ROMFS_FILES := $(OUT)/romfs.stamp
+.PHONY: FORCE
+$(OUT)/romfs.stamp: FORCE
+	@if [ ! -f $@ ] || [ -n "$$(find $(ROMFS) -newer $@ -print -quit)" ]; then touch $@; fi
+
+$(TARGET).nro: $(TARGET).elf $(TARGET).nacp $(ROMFS_FILES)
 	@test -f $(ROMFS)/www/index.html || (echo "romfs missing: run 'make romfs GAME=...' first" && false)
 	elf2nro $< $@ --icon=$(ICON) --nacp=$(TARGET).nacp --romfsdir=$(ROMFS)
 
@@ -76,7 +83,7 @@ NSPWORK  := $(OUT)/nsp-work
 
 nsp: $(TARGET).nsp
 
-$(TARGET).nsp: $(TARGET).elf $(TARGET).nacp npdm.json
+$(TARGET).nsp: $(TARGET).elf $(TARGET).nacp npdm.json $(ROMFS_FILES)
 	@test -n "$(KEYS)" || (echo "prod.keys not found: pass KEYS=/path/to/prod.keys" && false)
 	@test -f $(ROMFS)/www/index.html || (echo "romfs missing: run 'make romfs GAME=...' first" && false)
 	rm -rf $(NSPWORK) && mkdir -p $(NSPWORK)/exefs $(NSPWORK)/control
