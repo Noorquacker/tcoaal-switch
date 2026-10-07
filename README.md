@@ -94,9 +94,14 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
 ### Known issues / TODO
 
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
-* **Unsupported canvas blend modes:** `difference`, `saturation` and `multiply` fall back to
-  normal drawing. They appear to be used only by RPG Maker's non-WebGL fallback paths and its
-  capability tests. `lighter` (used for the menu background blur) is implemented.
+* **Canvas blend modes `difference`, `saturation` and `multiply` are not implemented** (they draw
+  as normal). This game never needs them. `multiply` is only used by Pixi's canvas renderer, and
+  the port uses WebGL. `difference`/`saturation` are only used by the sprite tinter (negative
+  tones and grey) and the canvas-only `ToneSprite`. RPG Maker runs a capability test at startup,
+  sees they're unsupported, and skips those steps. The game data never tints a sprite: Tint
+  Screen (240 uses) goes through WebGL's ToneFilter, and there are no Tint Picture, Show Animation
+  or `\BUSTDIM`/`\BUSTTONE` uses (the portrait dim tone `-68,-68,0,68` would be affected). There
+  are no battles either. `lighter` (menu background blur) works.
 * The NRO build gets whatever main-thread stack hbloader provides, while the NSP gets 8 MB. If the
   NRO crashes on deep JS recursion, use the NSP.
 
