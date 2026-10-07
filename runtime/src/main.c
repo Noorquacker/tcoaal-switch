@@ -167,6 +167,75 @@ static void stats_frame(double frame_ms, double js_ms) {
     }
 }
 
+#ifdef __SWITCH__
+// Clocks. ApmCpuBoostMode_FastLoad raises the CPU to 1785 MHz but drops the GPU
+// to 76.8 MHz, so set both explicitly: CPU 1785 MHz, GPU at the official maximum
+// for the current mode (460.8 MHz handheld, 768 MHz docked). The OS resets clocks
+// when the performance mode changes, so clocks_tick() re-applies them. Original
+// rates are restored on exit. TCOAAL_CLOCKS=0 in debug.cfg leaves clocks alone.
+enum { CLK_CPU, CLK_GPU, CLK_N };
+static const PcvModuleId clk_mod[CLK_N] = {PcvModuleId_CpuBus, PcvModuleId_GPU};
+static const PcvModule clk_pcv[CLK_N] = {PcvModule_CpuBus, PcvModule_GPU};  // pre-8.0.0
+static ClkrstSession clk_sess[CLK_N];
+static u32 clk_orig[CLK_N];
+static bool clk_on, clk_rst;  // clk_rst: clkrst (8.0.0+) rather than pcv
+static s32 clk_mode = -1;
+
+static u32 clk_get(int i) {
+    u32 hz = 0;
+    if (clk_rst) clkrstGetClockRate(&clk_sess[i], &hz);
+    else pcvGetClockRate(clk_pcv[i], &hz);
+    return hz;
+}
+static void clk_set(int i, u32 hz) {
+    if (clk_rst) clkrstSetClockRate(&clk_sess[i], hz);
+    else pcvSetClockRate(clk_pcv[i], hz);
+}
+
+static void clocks_apply(void) {
+    s32 mode = appletGetPerformanceMode();
+    clk_set(CLK_CPU, 1785000000);
+    clk_set(CLK_GPU, mode == ApmPerformanceMode_Boost ? 768000000 : 460800000);
+    if (mode != clk_mode)
+        rt_log("clocks: %s, cpu %u MHz, gpu %.1f MHz", mode == ApmPerformanceMode_Boost ? "docked" : "handheld",
+               clk_get(CLK_CPU) / 1000000, clk_get(CLK_GPU) / 1e6);
+    clk_mode = mode;
+}
+
+static void clocks_init(void) {
+    const char *v = debug_get("TCOAAL_CLOCKS");
+    if (v && atoi(v) == 0) return;
+    clk_rst = hosversionAtLeast(8, 0, 0);
+    if (clk_rst ? R_FAILED(clkrstInitialize()) : R_FAILED(pcvInitialize())) {
+        rt_log("clocks: clkrst/pcv unavailable");
+        return;
+    }
+    for (int i = 0; i < CLK_N; i++)
+        if (clk_rst) clkrstOpenSession(&clk_sess[i], clk_mod[i], 3);
+    for (int i = 0; i < CLK_N; i++) clk_orig[i] = clk_get(i);
+    clk_on = true;
+    clocks_apply();
+}
+
+static void clocks_tick(long frame) {
+    if (clk_on && frame % 60 == 0 && appletGetPerformanceMode() != clk_mode) clocks_apply();
+}
+
+static void clocks_exit(void) {
+    if (!clk_on) return;
+    for (int i = 0; i < CLK_N; i++) {
+        if (clk_orig[i]) clk_set(i, clk_orig[i]);
+        if (clk_rst) clkrstCloseSession(&clk_sess[i]);
+    }
+    if (clk_rst) clkrstExit();
+    else pcvExit();
+}
+#else
+static void clocks_init(void) {}
+static void clocks_tick(long frame) { (void)frame; }
+static void clocks_exit(void) {}
+#endif
+
 static void host_paths(int argc, char **argv, char *game, size_t gsz, char *save, size_t ssz) {
 #ifdef __SWITCH__
     (void)argc; (void)argv;
@@ -186,13 +255,13 @@ int main(int argc, char **argv) {
     romfsInit();
     socketInitializeDefault();
     nxlinkStdio();
-    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
 #endif
     char game[512], save[512];
     host_paths(argc, argv, game, sizeof game, save, sizeof save);
     rt_fs_set_roots(game, save);
     rt_log("game root: %s, save root: %s", game, save);
     debug_load_cfg(save);
+    clocks_init();
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER) < 0) {
         rt_log("SDL_Init: %s", SDL_GetError());
@@ -246,7 +315,7 @@ int main(int argc, char **argv) {
     run_jobs(ctx);
 
     uint64_t freq = SDL_GetPerformanceFrequency(), t0 = SDL_GetPerformanceCounter();
-    long frames = 0;
+    long frames = 0, ticks = 0;
     bool stats = debug_get("TCOAAL_STATS") != NULL;
     uint64_t last = SDL_GetPerformanceCounter();
     while (!quit_requested) {
@@ -272,6 +341,7 @@ int main(int argc, char **argv) {
             SDL_Delay(4);  // nothing drawn: don't spin, don't present a stale buffer
         }
         uint64_t end = SDL_GetPerformanceCounter();
+        clocks_tick(++ticks);
         if (stats) stats_frame((double)(end - last) * 1000.0 / (double)freq, js_ms);
         last = end;
 #ifdef __SWITCH__
@@ -280,6 +350,7 @@ int main(int argc, char **argv) {
     }
 
     rt_audio_shutdown();
+    clocks_exit();
     // Skip JS_FreeRuntime: the OS reclaims everything and it is slow with a big heap.
     SDL_GL_DeleteContext(glc);
     SDL_DestroyWindow(window);

@@ -68,6 +68,7 @@ environment (host) or `<save dir>/debug.cfg` (one `KEY=value` per line):
 | `TCOAAL_SHOTS=120:/path/a.png,600:/path/b.png` | Screenshot after the given frames. This can upset yuzu's GPU emulation. |
 | `TCOAAL_KEYS=300:13,420:27` | Tap a DOM keyCode at the given frames |
 | `TCOAAL_EXIT=900` | Quit after N frames |
+| `TCOAAL_CLOCKS=0` | Leave CPU/GPU clocks alone (by default: CPU 1785 MHz, GPU 460.8 MHz handheld / 768 MHz docked) |
 
 **Remove `debug.cfg` before playing normally:** with `TCOAAL_KEYS`/`TCOAAL_EXIT` set, the game
 presses keys by itself and quits.
@@ -92,7 +93,7 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   * profile hot paths (Pixi's sprite batching, the tilemap, window/bitmap redraws)
   * move image decoding off the main thread (it currently happens synchronously when images load)
   * avoid repeated full-texture uploads of dirty canvases
-  * check `-O3`/LTO, and the CPU boost mode during play
+  * check `-O3`/LTO
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
 * **Button mappings are not fully verified.** A/B were confirmed swapped and fixed. X/Y were
   swapped along with them (the game's dash/menu actions) but haven't been checked in game. The
