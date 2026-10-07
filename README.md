@@ -78,6 +78,8 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
 
 * Asset decryption, hidden-script extraction, and bytecode compilation of all scripts
 * Boot, title screen, New Game, intro cutscenes, message windows with name boxes and coloured text
+* Character portraits on the correct side, with dialogue text aligned correctly (needed the legacy
+  `RegExp.$1`… statics, which QuickJS lacks; shimmed in `runtime/js/core.js`)
 * Saving and loading of settings and global save data
 * Audio: background music, sound effects and fades, with Vorbis decoding on worker threads
 * Gamepad input. A/B and X/Y are swapped on the Switch so that Nintendo A confirms and B cancels.
@@ -91,10 +93,6 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   * move image decoding off the main thread (it currently happens synchronously when images load)
   * avoid repeated full-texture uploads of dirty canvases
   * check `-O3`/LTO, and the CPU boost mode during play
-* **Ashley's portrait shows on the left side of the screen instead of the right.**
-* **Dialogue text is shifted to the right while character portraits are on screen.** This and the
-  portrait issue are probably related: likely text measurement or alignment in the canvas layer,
-  or something the bust/message plugins read from the DOM or canvas.
 * **Touchscreen is not supported.** Mouse/touch events are not forwarded yet.
 * **Button mappings are not fully verified.** A/B were confirmed swapped and fixed. X/Y were
   swapped along with them (the game's dash/menu actions) but haven't been checked in game. The

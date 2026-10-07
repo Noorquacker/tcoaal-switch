@@ -55,6 +55,37 @@
         }
     };
 
+    // ---- legacy RegExp statics (RegExp.$1-$9, lastMatch, ...) ----------------
+    // V8 has these; QuickJS doesn't. RPG Maker and the YEP/Irina plugins read
+    // RegExp.$1 after match()/test() (bust positions, message alignment, notetags).
+    // match/test/replace/split all go through the `exec` property, so wrapping it
+    // records every successful match. The capture strings are built lazily.
+    (function () {
+        const exec = RegExp.prototype.exec;
+        let last = null;
+        Object.defineProperty(RegExp.prototype, 'exec', {
+            value: function exec_(s) {
+                const r = exec.call(this, s);
+                if (r !== null) last = r;
+                return r;
+            },
+            writable: true, configurable: true,
+        });
+        const def = (name, get) => Object.defineProperty(RegExp, name, { get, configurable: true });
+        for (let i = 1; i <= 9; i++)
+            def('$' + i, () => (last && last[i] !== undefined ? last[i] : ''));
+        const lastMatch = () => (last ? last[0] : '');
+        const input = () => (last ? last.input : '');
+        const left = () => (last ? last.input.slice(0, last.index) : '');
+        const right = () => (last ? last.input.slice(last.index + last[0].length) : '');
+        const paren = () => (last && last.length > 1 && last[last.length - 1] !== undefined ? last[last.length - 1] : '');
+        def('lastMatch', lastMatch); def('$&', lastMatch);
+        def('input', input); def('$_', input);
+        def('leftContext', left); def('$`', left);
+        def('rightContext', right); def("$'", right);
+        def('lastParen', paren); def('$+', paren);
+    })();
+
     // ---- performance ------------------------------------------------------
     // replace the built-in (read-only) object so everything shares the runtime clock
     global.performance = {
