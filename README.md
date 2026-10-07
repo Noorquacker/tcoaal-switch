@@ -74,18 +74,19 @@ presses keys by itself and quits.
 
 ## Status
 
-Working (host build, and NRO + NSP in yuzu):
+Working (host build, NRO and NSP in yuzu, and on a real Switch):
 
 * Asset decryption, hidden-script extraction, and bytecode compilation of all scripts
 * Boot, title screen, New Game, intro cutscenes, message windows with name boxes and coloured text
 * Saving and loading of settings and global save data
+* Audio: background music, sound effects and fades, with Vorbis decoding on worker threads
 * Gamepad input. A/B and X/Y are swapped on the Switch so that Nintendo A confirms and B cancels.
 * NRO with a custom icon; NSP (title ID `0100C0FF1E5A0000`) with an 8 MB main-thread stack
 
 ### Known issues / TODO
 
-* **Performance is really bad.** The JS interpreter takes about 10 ms per frame in yuzu,
-  versus about 1.5 ms on a desktop PC. Ideas:
+* **Performance is really bad** (confirmed on real hardware). The JS interpreter takes about
+  10 ms per frame in yuzu, versus about 1.5 ms on a desktop PC. Ideas:
   * profile hot paths (Pixi's sprite batching, the tilemap, window/bitmap redraws)
   * move image decoding off the main thread (it currently happens synchronously when images load)
   * avoid repeated full-texture uploads of dirty canvases
@@ -103,9 +104,6 @@ Working (host build, and NRO + NSP in yuzu):
 * **Unsupported canvas blend modes:** `difference`, `saturation` and `multiply` fall back to
   normal drawing. They appear to be used only by RPG Maker's non-WebGL fallback paths and its
   capability tests. `lighter` (used for the menu background blur) is implemented.
-* **Audio is untested on real output.** The mixer and decoder have only been run with a dummy
-  audio driver and in yuzu.
-* **No real-hardware testing yet.** Everything so far was tested on the Linux host build and in yuzu.
 * The NRO build gets whatever main-thread stack hbloader provides, while the NSP gets 8 MB. If the
   NRO crashes on deep JS recursion, use the NSP.
 
