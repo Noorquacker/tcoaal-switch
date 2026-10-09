@@ -1,6 +1,7 @@
 // Core natives: virtual filesystem, script loading, event queue, misc helpers.
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -678,6 +679,39 @@ static JSValue js_quit(JSContext *ctx, JSValueConst this, int argc, JSValueConst
     return JS_UNDEFINED;
 }
 
+// The game's chain (Chain.update/Chain.drag in the core script): FABRIK-style
+// passes from the target to the anchor and back, 3 times a frame. Same math,
+// on [x, y, rotation] triples in a Float64Array.
+//   chainRelax(seg, n, targetX, targetY, anchorX, anchorY, halfWidth, back, iterations)
+static JSValue js_chain_relax(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
+    (void)this; (void)argc;
+    size_t len;
+    double *seg = (double *)rt_get_bytes(ctx, argv[0], &len);
+    int32_t n = rt_arg_i(ctx, argv[1]);
+    if (!seg || n <= 0 || len < (size_t)n * 3 * sizeof *seg) return JS_UNDEFINED;
+    double fx = rt_arg_f(ctx, argv[2]), fy = rt_arg_f(ctx, argv[3]);
+    double sx = rt_arg_f(ctx, argv[4]), sy = rt_arg_f(ctx, argv[5]);
+    double h = rt_arg_f(ctx, argv[6]), back = rt_arg_f(ctx, argv[7]);
+    int32_t iters = rt_arg_i(ctx, argv[8]);
+    for (int32_t it = 0; it < iters; it++) {
+        for (int pass = 0; pass < 2; pass++) {
+            double px = pass ? sx : fx, py = pass ? sy : fy;
+            for (int32_t k = 0; k < n; k++) {
+                double *s = seg + 3 * (pass ? n - 1 - k : k);
+                double dx = px - s[0], dy = py - s[1], l = sqrt(dx * dx + dy * dy);
+                double ux = 1, uy = 0;  // cos/sin of atan2(dy, dx)
+                if (l > 0) ux = dx / l, uy = dy / l;
+                double t = 1 - (l < h ? l / h : 1);
+                t = 0.3 + 0.7 * (1 - t * t * t);  // lerp(CHAIN_RELAX, 1, ease-out cubic)
+                s[2] += (atan2(dy, dx) - s[2]) * t;
+                if (l > h && l - h > 1) s[0] = px - ux * h, s[1] = py - uy * h;
+                px = s[0] - ux * back, py = s[1] - uy * back;
+            }
+        }
+    }
+    return JS_UNDEFINED;
+}
+
 static JSValue js_fullscreen(JSContext *ctx, JSValueConst this, int argc, JSValueConst *argv) {
     (void)this; (void)argc;
     rt_set_fullscreen(JS_ToBool(ctx, argv[0]));
@@ -704,6 +738,7 @@ void rt_init_sys(JSContext *ctx, JSValueConst ns) {
     rt_set_func(ctx, sys, "now", js_now, 0);
     rt_set_func(ctx, sys, "readFile", js_read_file, 1);
     rt_set_func(ctx, sys, "lzCompressBase64", js_lz_compress_base64, 1);
+    rt_set_func(ctx, sys, "chainRelax", js_chain_relax, 9);
     rt_set_func(ctx, sys, "readText", js_read_text, 1);
     rt_set_func(ctx, sys, "writeFile", js_write_file, 2);
     rt_set_func(ctx, sys, "stat", js_stat, 1);

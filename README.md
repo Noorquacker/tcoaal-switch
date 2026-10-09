@@ -88,7 +88,11 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   port and swapped in at build time; it is not game art).
 * Performance is fine on real hardware (tested undocked). Explicit CPU/GPU clocks; images
   decoded on worker threads; `Bitmap#blur`, `Bitmap.snap` and save compression
-  (`LZString.compressToBase64`, byte-identical output) are native (`runtime/js/gamefix.js`)
+  (`LZString.compressToBase64`, byte-identical output) are native (`runtime/js/gamefix.js`).
+  The chain (`Chain` in the core script, 76 links on Map225) is relaxed natively
+  (`sys.chainRelax`, same results as the game's JS to ~1e-12 px), and `Tilemap#_sortChildren`
+  uses a stable insertion sort. On desktop this cut that room's per-frame JS+render from 3.6 to
+  2.0 ms.
 * NRO with a custom icon; NSP (title ID `0100C0FF1E5A0000`) with an 8 MB main-thread stack
 
 ### Known issues / TODO
@@ -102,6 +106,9 @@ Working (host build, NRO and NSP in yuzu, and on a real Switch):
   Screen (240 uses) goes through WebGL's ToneFilter, and there are no Tint Picture, Show Animation
   or `\BUSTDIM`/`\BUSTTONE` uses (the portrait dim tone `-68,-68,0,68` would be affected). There
   are no battles either. `lighter` (menu background blur) works.
+* **yuzu crashes once the chain is on screen** (Map225, or any map with a chain): `Shader::NotImplementedException:
+  PRET flow analysis is not implemented`, on both Vulkan and OpenGL, with or without the native
+  chain code. It's a yuzu shader recompiler limit, not a port bug; real hardware is fine.
 * The NRO build gets whatever main-thread stack hbloader provides, while the NSP gets 8 MB. If the
   NRO crashes on deep JS recursion, use the NSP.
 
